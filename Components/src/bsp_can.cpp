@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 23:09:59
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-06 17:00:48
+ * @LastEditTime: 2025-09-12 11:12:42
  * @FilePath: /leg/Components/src/bsp_can.cpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -13,8 +13,10 @@
 #include "stm32f4xx_hal_can.h"
 #include "stm32f4xx_hal_def.h"
 
+#include <cstdint>
 #include <vector>
 #include <cstring>
+#include <iterator>
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////// CAN_TX BEGIN ///////////////////////////////////////////////////
@@ -23,7 +25,7 @@
 
 bsp_can_tx_instance::bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide, \
                                          const uint32_t rtr, const uint32_t dlc) : \
-                                         m_hcan(hcan), m_ptxd(nullptr) {
+                                         m_hcan(hcan) {
     // 验证参数正确性
     if (hcan != &hcan1 && hcan != &hcan2) {
         m_mode = BSP_CAN_TX_ERROR;
@@ -37,7 +39,15 @@ bsp_can_tx_instance::bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const ui
         m_mode = BSP_CAN_TX_ERROR;
         return;
     }
-    if (dlc < 0x00U || dlc > 0x08U) {
+    if (dlc > 0x08U) {
+        m_mode = BSP_CAN_TX_ERROR;
+        return;
+    }
+    if (ide == CAN_ID_STD && id > 0x7FF) {  // 标准ID：11位，0~0x7FF
+        m_mode = BSP_CAN_TX_ERROR;
+        return;
+    }
+    if (ide == CAN_ID_EXT && id > 0x1FFFFFFF) {  // 扩展ID：29位，0~0x1FFFFFFF
         m_mode = BSP_CAN_TX_ERROR;
         return;
     }
@@ -54,12 +64,6 @@ bsp_can_tx_instance::bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const ui
     }
     m_tx_header.RTR = rtr;
     m_tx_header.DLC = dlc;
-}
-
-bsp_can_tx_instance::bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide,
-                                         const uint32_t rtr, const uint32_t dlc, const uint8_t* const txd) : \
-                                         bsp_can_tx_instance(hcan, id, ide, rtr, dlc) {
-    m_ptxd = txd;
 }
 
 // constructors end //
@@ -84,12 +88,12 @@ void bsp_can_tx_instance::enable() {
     }
 }
 
-void bsp_can_tx_instance::set_ptxd(const uint8_t* const txd) {
-    m_ptxd = txd;
-}
-
-void bsp_can_tx_instance::set_dlc(uint32_t dlc) {
-    m_tx_header.DLC = dlc;
+bsp_can_status_e bsp_can_tx_instance::set_dlc(const uint32_t dlc) {
+    if (dlc <= 0x08U) {
+        m_tx_header.DLC = dlc;
+        return BSP_CAN_OK;
+    }
+    return BSP_CAN_ERROR;
 }
 
 // setters end //
@@ -107,10 +111,8 @@ bsp_can_tx_mode_e bsp_can_tx_instance::get_mode() const {
 uint32_t bsp_can_tx_instance::get_id() const {
     if (m_tx_header.IDE == CAN_ID_STD) {
         return m_tx_header.StdId;
-    } else if (m_tx_header.IDE == CAN_ID_EXT) {
-        return m_tx_header.ExtId;
     } else {
-        return BSP_CAN_ERROR;
+        return m_tx_header.ExtId;
     }
 }
 
@@ -130,15 +132,28 @@ uint32_t bsp_can_tx_instance::get_mailbox() const {
 
 // methods begin //
 
-status_e bsp_can_tx_instance::transmit() {
-    if (m_mode == BSP_CAN_TX_ENABLE && m_ptxd != nullptr && HAL_CAN_GetState(m_hcan) == HAL_CAN_STATE_READY) {
-        if(HAL_CAN_AddTxMessage(m_hcan, &m_tx_header, m_ptxd, &m_mailbox) == HAL_OK){
+bsp_can_status_e bsp_can_tx_instance::transmit(const uint8_t* const ptxd) {
+    if (m_mode == BSP_CAN_TX_ENABLE && ptxd != nullptr && HAL_CAN_GetState(m_hcan) == HAL_CAN_STATE_READY) {
+        HAL_StatusTypeDef hal_tx_status = HAL_CAN_AddTxMessage(m_hcan, &m_tx_header, ptxd, &m_mailbox);
+        if (hal_tx_status == HAL_OK) {
             return BSP_CAN_OK;
+        } else if (hal_tx_status == HAL_BUSY) {
+            return BSP_CAN_BUSY;
         }
     }
 
-    // 未使能 / 数据为空指针 / CAN状态异常 / 未发送成功
+    // 未使能 / 数据为空指针 / CAN状态异常 / 未发送成功 / dlc参数错误
     return BSP_CAN_ERROR;
+}
+
+
+bsp_can_status_e bsp_can_tx_instance::transmit(const uint8_t* const ptxd, uint32_t dlc) {
+    if (dlc > 0x08U) {
+        return BSP_CAN_ERROR;
+    }
+
+    m_tx_header.DLC = dlc;
+    return transmit(ptxd);
 }
 
 // methods end //
@@ -158,8 +173,8 @@ std::vector<bsp_can_rx_instance*> bsp_can_rx_instance::spm_rx_instances;
 
 // constuctors begin //
 
-bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide) : \
-                                         m_hcan(hcan), m_prxd(nullptr) {
+bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide, const std::function<void()> callback) : \
+                                         m_hcan(hcan), m_id(id), m_ide(ide), m_callback(callback) {
     if (hcan != &hcan1 && hcan != &hcan2) {
         m_mode = BSP_CAN_RX_ERROR;
         return;
@@ -168,21 +183,24 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
         m_mode = BSP_CAN_RX_ERROR;
         return;
     }
+    if (ide == CAN_ID_STD && id > 0x7FF) {
+        m_mode = BSP_CAN_RX_ERROR;
+        return;
+    } else if (id > 0x1FFFFFFF) {
+        m_mode = BSP_CAN_RX_ERROR;
+        return;
+    }
 
     m_mode = BSP_CAN_RX_DISABLE; // 接收默认关闭，需与filterActivation同步
-    m_hcan = hcan;
-    m_id = id;
-    m_ide = ide;
 
-    m_arxd[0] = 0;
-    m_arxd[1] = 0;
-    m_arxd[2] = 0;
-    m_arxd[3] = 0;
-    m_arxd[4] = 0;
-    m_arxd[5] = 0;
-    m_arxd[6] = 0;
-    m_arxd[7] = 0;
+    // 初始化双缓冲区
+    for (int i = 0; i < 8; i++) {
+        ma_rxd1[i] = 0;
+        ma_rxd2[i] = 0;
+    }
+    mp_last_received_data = ma_rxd1;
 
+    // 配置过滤器
     if (hcan == &hcan1) {
         // 检查过滤器索引是否超出
         if (sm_can1_filter_index >= BSP_CAN2_FILTER_START) {
@@ -200,16 +218,14 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
     m_filter.FilterMode = CAN_FILTERMODE_IDLIST;
     m_filter.FilterActivation = DISABLE; // 接收默认关闭，需与m_mode同步
 
-    m_filter.FilterScale = CAN_FILTERSCALE_16BIT;
-    m_filter.FilterIdHigh = id << 5;
-    if (ide == CAN_ID_STD) {
+    if (ide == CAN_ID_STD) { // stdID
         m_filter.FilterScale = CAN_FILTERSCALE_16BIT;
         m_filter.FilterIdHigh = (id << 5) & 0xFFFF;
         m_filter.FilterIdLow = 0x0000;
-    } else {
+    } else { // extID
         m_filter.FilterScale = CAN_FILTERSCALE_32BIT;
         m_filter.FilterIdHigh = (id >> 13) & 0xFFFF; // 29位ID的高16位
-        m_filter.FilterIdLow = (id & 0x1FFF) << 3; // 29位ID的低13位
+        m_filter.FilterIdLow = ((id  << 3) & 0xFFF8) | CAN_ID_EXT; // 29位ID的低13位
     }
 
     // 交替使用FIFO0和FIFO1
@@ -239,12 +255,6 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
     spm_rx_instances.push_back(this);
 }
 
-bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, \
-                                         const uint32_t ide, uint8_t* const prxd) :\
-                                         bsp_can_rx_instance(hcan, id, ide) {
-    m_prxd = prxd;
-}
-
 // constructors end //
 
 // destructors begin //
@@ -263,24 +273,34 @@ bsp_can_rx_instance::~bsp_can_rx_instance() {
 
 // setters begin //
 
-void bsp_can_rx_instance::disable() {
+bsp_can_status_e bsp_can_rx_instance::disable() {
     if (m_mode != BSP_CAN_RX_ERROR) {
-        m_mode = BSP_CAN_RX_DISABLE;
         m_filter.FilterActivation = DISABLE;
-        HAL_CAN_ConfigFilter(m_hcan, &m_filter);
+        if (HAL_CAN_ConfigFilter(m_hcan, &m_filter) == HAL_OK) {
+            m_mode = BSP_CAN_RX_DISABLE;
+            return BSP_CAN_OK;
+        }
     }
+    return BSP_CAN_ERROR;
 }
 
-void bsp_can_rx_instance::enable() {
+bsp_can_status_e bsp_can_rx_instance::enable() {
     if (m_mode != BSP_CAN_RX_ERROR) {
-        m_mode = BSP_CAN_RX_ENABLE;
         m_filter.FilterActivation = ENABLE;
-        HAL_CAN_ConfigFilter(m_hcan, &m_filter);
+        if (HAL_CAN_ConfigFilter(m_hcan, &m_filter) == HAL_OK) {
+            m_mode = BSP_CAN_RX_ENABLE;
+            return BSP_CAN_OK;
+        }
     }
+    return BSP_CAN_ERROR;
 }
 
-void bsp_can_rx_instance::set_prxd(uint8_t* prxd) {
-    m_prxd = prxd;
+void bsp_can_rx_instance::set_callback(const std::function<void()> callback) {
+    m_callback = callback;
+}
+
+void bsp_can_rx_instance::clear_callback() {
+    m_callback = nullptr;
 }
 
 // setters end //
@@ -300,15 +320,21 @@ uint32_t bsp_can_rx_instance::get_ide() const {
 }
 
 uint32_t bsp_can_rx_instance::get_dlc() const {
-    return m_rx_header.DLC;
+    return mp_rx_header.DLC;
 }
 
 uint32_t bsp_can_rx_instance::get_fifo() const {
     return m_filter.FilterFIFOAssignment;
 }
 
-const uint8_t* const bsp_can_rx_instance::get_arxd() const {
-    return m_arxd;
+bsp_can_status_e bsp_can_rx_instance::get_arxd(uint8_t* const prxd) const {
+    if (prxd == nullptr || mp_last_received_data == nullptr || m_mode == BSP_CAN_RX_ERROR) {
+        return BSP_CAN_ERROR;
+    }
+
+    uint8_t copy_len = (mp_rx_header.DLC > 0x08U) ? 8 : mp_rx_header.DLC;
+    memcpy(prxd, mp_last_received_data, copy_len);
+    return BSP_CAN_OK;
 }
 
 // getters end //
@@ -319,18 +345,28 @@ void bsp_can_rx_instance::bsp_can_get_msg_to_instances(const CAN_HandleTypeDef *
                                   const CAN_RxHeaderTypeDef *const rx_header, const uint8_t *const rx_data) {
         // 遍历映射表，查找匹配的实例
         for (auto it = spm_rx_instances.begin(); it != spm_rx_instances.end(); it++) {
-        if ((*it)->m_hcan == hcan &&
-            (*it)->m_rxfifo == fifo &&
-            (*it)->m_ide == rx_header->IDE &&
-            (*it)->m_id == ((rx_header->IDE == CAN_ID_STD) ? rx_header->StdId : rx_header->ExtId)) {
-            // 如果参数匹配，则对此实例赋值
+        if ((*it)->m_hcan == hcan && \
+            (*it)->m_rxfifo == fifo && \
+            (*it)->m_ide == rx_header->IDE && \
+            (*it)->m_id == ((rx_header->IDE == CAN_ID_STD) ? rx_header->StdId : rx_header->ExtId) && \
+            (*it)->m_mode == BSP_CAN_RX_ENABLE) {
+            // 如果参数匹配且使能接收，则对此实例赋值
+
             // 听ai说memcpy有点危险，改用直接赋值
-            (*it)->m_rx_header = *rx_header; // 对结构体的直接赋值？
+            (*it)->mp_rx_header = *rx_header; // 对结构体的直接赋值？
 
             uint32_t copy_len = (rx_header->DLC > 8) ? 8 : rx_header->DLC;
-            memcpy((*it)->m_arxd, rx_data, copy_len);
-            if ((*it)->m_prxd != nullptr) {
-                memcpy((*it)->m_prxd, rx_data, copy_len);
+            // 双缓冲区
+            if ((*it)->mp_last_received_data == (*it)->ma_rxd1) {
+                memcpy((*it)->ma_rxd2, rx_data, copy_len);
+                (*it)->mp_last_received_data = (*it)->ma_rxd2;
+            } else if ((*it)->mp_last_received_data == (*it)->ma_rxd2 || (*it)->mp_last_received_data == nullptr) {
+                memcpy((*it)->ma_rxd1, rx_data, copy_len);
+                (*it)->mp_last_received_data = (*it)->ma_rxd1;
+            }
+
+            if ((*it)->m_callback) {
+                (*it)->m_callback();
             }
             break;
         }
@@ -345,7 +381,7 @@ void bsp_can_rx_instance::bsp_can_get_msg_to_instances(const CAN_HandleTypeDef *
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////// OTHER FUNCTIONS BEGIN /////////////////////////////////////////////
 
-status_e bsp_can_init_all() {
+bsp_can_status_e bsp_can_init_all() {
     if (HAL_CAN_Start(&hcan1) == HAL_OK && \
         HAL_CAN_Start(&hcan2) == HAL_OK && \
         HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) == HAL_OK && \
@@ -356,7 +392,6 @@ status_e bsp_can_init_all() {
     }
     return BSP_CAN_ERROR;
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////// RECEIVE CALLBACKS BEGIN////////////////////////////////////////////

@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 22:18:23
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-06 15:41:54
+ * @LastEditTime: 2025-09-12 13:13:24
  * @FilePath: /leg/Components/inc/bsp_can.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -12,10 +12,11 @@
 
 #include "can.h"
 #include "stm32f4xx_hal_can.h"
-#include <cstdint>
+#include <stdint.h>
 #include <vector>
+#include <functional>
 
-#define BSP_CAN2_FILTER_START 14
+constexpr uint8_t BSP_CAN2_FILTER_START = 14; // 0 ~ 27
 
 enum bsp_can_tx_mode_e {
     BSP_CAN_TX_DISABLE = 0,
@@ -29,7 +30,8 @@ enum bsp_can_rx_mode_e {
 };
 enum bsp_can_status_e {
     BSP_CAN_ERROR = 0,
-    BSP_CAN_OK
+    BSP_CAN_OK,
+    BSP_CAN_BUSY
 };
 
 
@@ -38,20 +40,16 @@ private:
     bsp_can_tx_mode_e m_mode; // 默认关闭
     CAN_HandleTypeDef* m_hcan;
     CAN_TxHeaderTypeDef m_tx_header;
-    const uint8_t* m_ptxd;
     uint32_t m_mailbox;
 public:
     // constructors
-    bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide, const uint32_t rtr, \
-                        const uint32_t dlc);
-    bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide, const uint32_t rtr, \
-                        const uint32_t dlc, const uint8_t* const ptxd);
+    bsp_can_tx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide = CAN_ID_STD, const uint32_t rtr = CAN_RTR_DATA, \
+                        const uint32_t dlc = 0x08U);
 
     // setters
     void disable();
     void enable();
-    void set_ptxd(const uint8_t* const ptxd);
-    void set_dlc(uint32_t dlc);
+    bsp_can_status_e set_dlc(const uint32_t dlc);
 
     // getters
     CAN_HandleTypeDef* get_can_handle() const;
@@ -62,7 +60,8 @@ public:
     bsp_can_tx_mode_e get_mode() const;
 
     // methods
-    status_e transmit();
+    bsp_can_status_e transmit(const uint8_t* const ptxd);
+    bsp_can_status_e transmit(const uint8_t* const ptxd, uint32_t dlc); // 调用此方法会覆盖之前设置的dlc!
 };
 
 
@@ -74,33 +73,50 @@ public:
 ///     2. 调用get_prxd方法，获取接收到的数据(m_arxd变量)
 class bsp_can_rx_instance {
 private:
+    // members
     bsp_can_rx_mode_e m_mode; // 默认关闭
+
     CAN_HandleTypeDef* m_hcan;
-    CAN_RxHeaderTypeDef m_rx_header;
+    CAN_RxHeaderTypeDef mp_rx_header;
+
     uint32_t m_id;
     uint32_t m_ide;
-    uint8_t* m_prxd; // ptr rxd(外部缓存)
-    uint8_t m_arxd[8]; // array rxd(内部缓存)
+
+    // array rxd(内部缓存) 双缓冲区
+    uint8_t ma_rxd1[8];
+    uint8_t ma_rxd2[8];
+    uint8_t* mp_last_received_data; // 上一次接收完成的数据
+
     uint32_t m_rxfifo; // 接收要读取的FIFO (CAN_RX_FIFO0/CAN_RX_FIFO1)
     CAN_FilterTypeDef m_filter;
 
+    std::function<void()> m_callback; // 外部回调函数
+    
     static uint8_t sm_can1_filter_index;
     static uint8_t sm_can2_filter_index;
 
     // 接收实例地址映射表，用于自动在接收回调中接收各实例的数据
     static std::vector<bsp_can_rx_instance*> spm_rx_instances;
+
+    // methods
+    static void bsp_can_get_msg_to_instances(const CAN_HandleTypeDef* const hcan, const uint32_t fifo, \
+                                             const CAN_RxHeaderTypeDef * const header, const uint8_t* const data);
+
+    // frend functions
+    friend void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan);
+    friend void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan);
 public:
     // constructors
-    bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide);
-    bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide, uint8_t* const prxd);
+    bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide = CAN_ID_STD, const std::function<void()> callback = nullptr);
 
     // destructors
     ~bsp_can_rx_instance();
 
     // setters
-    void disable();
-    void enable();
-    void set_prxd(uint8_t* const prxd); // 设置外部缓存地址 注意：地址失效时需将此参数设为nullptr，否则可能造成非法写内存！
+    bsp_can_status_e disable();
+    bsp_can_status_e enable();
+    void set_callback(const std::function<void()> callback);
+    void clear_callback();
 
     // getters
     bsp_can_rx_mode_e get_mode() const;
@@ -108,13 +124,9 @@ public:
     uint32_t get_ide() const;
     uint32_t get_dlc() const;
     uint32_t get_fifo() const;
-    const uint8_t* const get_arxd() const; // 获取内部缓存
-
-    // methods
-    static void bsp_can_get_msg_to_instances(const CAN_HandleTypeDef* const hcan, const uint32_t fifo, \
-                                             const CAN_RxHeaderTypeDef * const header, const uint8_t* const data);
+    bsp_can_status_e get_arxd(uint8_t* const prxd) const; // 获取内部缓存
 };
 
-status_e bsp_can_init_all();
+bsp_can_status_e bsp_can_init_all();
 
 #endif

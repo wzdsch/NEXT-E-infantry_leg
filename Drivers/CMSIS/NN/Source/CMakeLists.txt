@@ -55,6 +55,7 @@ target_compile_options(cmsis-nn PRIVATE -Ofast)
 target_include_directories(cmsis-nn PUBLIC "${NN}/Include")
 target_include_directories(cmsis-nn PUBLIC "${ROOT}/CMSIS/Core/Include")
 target_include_directories(cmsis-nn PUBLIC "${ROOT}/CMSIS/DSP/Include")
+
 if (BASICMATHSNN)
   add_subdirectory(BasicMathFunctions)
 endif()
