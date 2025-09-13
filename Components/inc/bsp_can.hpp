@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 22:18:23
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-12 13:13:24
+ * @LastEditTime: 2025-09-13 11:14:43
  * @FilePath: /leg/Components/inc/bsp_can.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -12,7 +12,7 @@
 
 #include "can.h"
 #include "stm32f4xx_hal_can.h"
-#include <stdint.h>
+#include <cstdint>
 #include <vector>
 #include <functional>
 
@@ -99,7 +99,7 @@ private:
     static std::vector<bsp_can_rx_instance*> spm_rx_instances;
 
     // methods
-    static void bsp_can_get_msg_to_instances(const CAN_HandleTypeDef* const hcan, const uint32_t fifo, \
+    volatile static void bsp_can_get_msg_to_instances(const CAN_HandleTypeDef* const hcan, const uint32_t fifo, \
                                              const CAN_RxHeaderTypeDef * const header, const uint8_t* const data);
 
     // frend functions
@@ -107,6 +107,8 @@ private:
     friend void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan);
 public:
     // constructors
+    // 注意: 由于不确定何时实例化, 因此构造函数中不能出现任何hal库对can的配置, 
+    //      只能进行一些类内的数据初始化, 防止实例化全局实例在main函数之前运行!
     bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const uint32_t id, const uint32_t ide = CAN_ID_STD, const std::function<void()> callback = nullptr);
 
     // destructors
@@ -125,6 +127,9 @@ public:
     uint32_t get_dlc() const;
     uint32_t get_fifo() const;
     bsp_can_status_e get_arxd(uint8_t* const prxd) const; // 获取内部缓存
+
+    // methods
+    bsp_can_status_e filter_cfg(); // 配置滤波器 (过滤器配置必须在CAN初始化之后，由用户自己决定配置过滤器的时机)
 };
 
 bsp_can_status_e bsp_can_init_all();

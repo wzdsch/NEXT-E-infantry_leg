@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 23:09:59
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-12 11:12:42
+ * @LastEditTime: 2025-09-13 11:14:45
  * @FilePath: /leg/Components/src/bsp_can.cpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -200,7 +200,7 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
     }
     mp_last_received_data = ma_rxd1;
 
-    // 配置过滤器
+    // 配置过滤器结构体
     if (hcan == &hcan1) {
         // 检查过滤器索引是否超出
         if (sm_can1_filter_index >= BSP_CAN2_FILTER_START) {
@@ -241,9 +241,8 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
     }
 
     m_filter.SlaveStartFilterBank = BSP_CAN2_FILTER_START;
-    if (HAL_CAN_ConfigFilter(hcan, &m_filter) != HAL_OK) {
-        m_mode = BSP_CAN_RX_ERROR;
-    }
+
+    // 后续提供了配置过滤器的方法, 以上只初始化数据, 配置要调用方法
 
     // 为映射表分配至少容纳28个实例的空间
     static bool is_reserved = false;
@@ -341,10 +340,10 @@ bsp_can_status_e bsp_can_rx_instance::get_arxd(uint8_t* const prxd) const {
 
 // methods begin //
 
-void bsp_can_rx_instance::bsp_can_get_msg_to_instances(const CAN_HandleTypeDef *const hcan, const uint32_t fifo, \
+volatile void bsp_can_rx_instance::bsp_can_get_msg_to_instances(const CAN_HandleTypeDef *const hcan, const uint32_t fifo, \
                                   const CAN_RxHeaderTypeDef *const rx_header, const uint8_t *const rx_data) {
-        // 遍历映射表，查找匹配的实例
-        for (auto it = spm_rx_instances.begin(); it != spm_rx_instances.end(); it++) {
+    // 遍历映射表，查找匹配的实例
+    for (auto it = spm_rx_instances.begin(); it != spm_rx_instances.end(); it++) {
         if ((*it)->m_hcan == hcan && \
             (*it)->m_rxfifo == fifo && \
             (*it)->m_ide == rx_header->IDE && \
@@ -373,6 +372,16 @@ void bsp_can_rx_instance::bsp_can_get_msg_to_instances(const CAN_HandleTypeDef *
     }
 }
 
+bsp_can_status_e bsp_can_rx_instance::filter_cfg() {
+    if (m_mode != BSP_CAN_RX_ERROR) {
+        if (HAL_CAN_ConfigFilter(m_hcan, &m_filter) == HAL_OK) {
+            return BSP_CAN_OK;
+        }
+    }
+    m_mode = BSP_CAN_RX_ERROR;
+    return BSP_CAN_ERROR;
+}
+
 // methods end //
 
 //////////////////////////////////// CAN_RX END ///////////////////////////////////////////////////
@@ -396,7 +405,7 @@ bsp_can_status_e bsp_can_init_all() {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////// RECEIVE CALLBACKS BEGIN////////////////////////////////////////////
 
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
+ extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
     CAN_RxHeaderTypeDef p_rx_header;
     uint8_t rx_data[8];
     if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &p_rx_header, rx_data) == HAL_OK) {
@@ -404,7 +413,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
     }
 }
 
-void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan) {
+extern "C" void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan) {
     CAN_RxHeaderTypeDef p_rx_header;
     uint8_t rx_data[8];
     if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO1, &p_rx_header, rx_data) == HAL_OK) {
