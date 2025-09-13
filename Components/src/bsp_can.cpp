@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 23:09:59
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-13 11:41:06
+ * @LastEditTime: 2025-09-13 13:31:57
  * @FilePath: /leg/Components/src/bsp_can.cpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -134,7 +134,7 @@ uint32_t bsp_can_tx_instance::get_mailbox() const {
 // methods begin //
 
 bsp_can_status_e bsp_can_tx_instance::transmit(const uint8_t* const ptxd) {
-    if (m_mode == BSP_CAN_TX_ENABLE && ptxd != nullptr && HAL_CAN_GetState(m_hcan) == HAL_CAN_STATE_READY) {
+    if (m_mode == BSP_CAN_TX_ENABLE && ptxd != nullptr) {
         HAL_StatusTypeDef hal_tx_status = HAL_CAN_AddTxMessage(m_hcan, &m_tx_header, ptxd, &m_mailbox);
         if (hal_tx_status == HAL_OK) {
             return BSP_CAN_OK;
