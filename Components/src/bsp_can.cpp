@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 23:09:59
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-13 11:14:45
+ * @LastEditTime: 2025-09-13 11:41:06
  * @FilePath: /leg/Components/src/bsp_can.cpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -13,6 +13,7 @@
 #include "stm32f4xx_hal_can.h"
 #include "stm32f4xx_hal_def.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <cstring>
@@ -167,7 +168,7 @@ bsp_can_status_e bsp_can_tx_instance::transmit(const uint8_t* const ptxd, uint32
 uint8_t bsp_can_rx_instance::sm_can1_filter_index = 0; // can1起始过滤器默认为0
 uint8_t bsp_can_rx_instance::sm_can2_filter_index = BSP_CAN2_FILTER_START; // can2起始过滤器默认为14(可修改)
 
-std::vector<bsp_can_rx_instance*> bsp_can_rx_instance::spm_rx_instances;
+bsp_can_rx_instance* bsp_can_rx_instance::spm_rx_instances[28] = {nullptr};
 
 // static members end //
 
@@ -244,14 +245,14 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
 
     // 后续提供了配置过滤器的方法, 以上只初始化数据, 配置要调用方法
 
-    // 为映射表分配至少容纳28个实例的空间
-    static bool is_reserved = false;
-    if (!is_reserved) {
-        is_reserved = true;
-        spm_rx_instances.reserve(28);
-    }
+    // // 为映射表分配至少容纳28个实例的空间
+    // static bool is_reserved = false;
+    // if (!is_reserved) {
+    //     is_reserved = true;
+    //     spm_rx_instances.reserve(28);
+    // }
 
-    spm_rx_instances.push_back(this);
+    spm_rx_instances[m_filter.FilterBank] = this;
 }
 
 // constructors end //
@@ -260,9 +261,9 @@ bsp_can_rx_instance::bsp_can_rx_instance(CAN_HandleTypeDef* const hcan, const ui
 
 bsp_can_rx_instance::~bsp_can_rx_instance() {
     // 迭代器遍历接收映射表，找到并删除自身
-    for (auto it = spm_rx_instances.begin(); it != spm_rx_instances.end(); it++) {
-        if (*it == this) {
-            spm_rx_instances.erase(it);
+    for (auto instance : spm_rx_instances) {
+        if (instance == this) {
+            spm_rx_instances[this->m_filter.FilterBank] = nullptr;
             break;
         }
     }
@@ -343,29 +344,29 @@ bsp_can_status_e bsp_can_rx_instance::get_arxd(uint8_t* const prxd) const {
 volatile void bsp_can_rx_instance::bsp_can_get_msg_to_instances(const CAN_HandleTypeDef *const hcan, const uint32_t fifo, \
                                   const CAN_RxHeaderTypeDef *const rx_header, const uint8_t *const rx_data) {
     // 遍历映射表，查找匹配的实例
-    for (auto it = spm_rx_instances.begin(); it != spm_rx_instances.end(); it++) {
-        if ((*it)->m_hcan == hcan && \
-            (*it)->m_rxfifo == fifo && \
-            (*it)->m_ide == rx_header->IDE && \
-            (*it)->m_id == ((rx_header->IDE == CAN_ID_STD) ? rx_header->StdId : rx_header->ExtId) && \
-            (*it)->m_mode == BSP_CAN_RX_ENABLE) {
+     for (bsp_can_rx_instance* instance : spm_rx_instances) {
+        if (instance->m_hcan == hcan && \
+            instance->m_rxfifo == fifo && \
+            instance->m_ide == rx_header->IDE && \
+            instance->m_id == ((rx_header->IDE == CAN_ID_STD) ? rx_header->StdId : rx_header->ExtId) && \
+            instance->m_mode == BSP_CAN_RX_ENABLE) {
             // 如果参数匹配且使能接收，则对此实例赋值
 
             // 听ai说memcpy有点危险，改用直接赋值
-            (*it)->mp_rx_header = *rx_header; // 对结构体的直接赋值？
+            instance->mp_rx_header = *rx_header; // 对结构体的直接赋值？
 
             uint32_t copy_len = (rx_header->DLC > 8) ? 8 : rx_header->DLC;
             // 双缓冲区
-            if ((*it)->mp_last_received_data == (*it)->ma_rxd1) {
-                memcpy((*it)->ma_rxd2, rx_data, copy_len);
-                (*it)->mp_last_received_data = (*it)->ma_rxd2;
-            } else if ((*it)->mp_last_received_data == (*it)->ma_rxd2 || (*it)->mp_last_received_data == nullptr) {
-                memcpy((*it)->ma_rxd1, rx_data, copy_len);
-                (*it)->mp_last_received_data = (*it)->ma_rxd1;
+            if (instance->mp_last_received_data == instance->ma_rxd1) {
+                memcpy(instance->ma_rxd2, rx_data, copy_len);
+                instance->mp_last_received_data = instance->ma_rxd2;
+            } else if (instance->mp_last_received_data == instance->ma_rxd2 || instance->mp_last_received_data == nullptr) {
+                memcpy(instance->ma_rxd1, rx_data, copy_len);
+                instance->mp_last_received_data = instance->ma_rxd1;
             }
 
-            if ((*it)->m_callback) {
-                (*it)->m_callback();
+            if (instance->m_callback) {
+                instance->m_callback();
             }
             break;
         }

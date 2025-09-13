@@ -2,7 +2,7 @@
  * @Author: wzdsch 1919524828@qq.com
  * @Date: 2025-09-02 22:18:23
  * @LastEditors: wzdsch 1919524828@qq.com
- * @LastEditTime: 2025-09-13 11:14:43
+ * @LastEditTime: 2025-09-13 11:36:01
  * @FilePath: /leg/Components/inc/bsp_can.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -96,7 +96,7 @@ private:
     static uint8_t sm_can2_filter_index;
 
     // 接收实例地址映射表，用于自动在接收回调中接收各实例的数据
-    static std::vector<bsp_can_rx_instance*> spm_rx_instances;
+    static bsp_can_rx_instance* spm_rx_instances[28];
 
     // methods
     volatile static void bsp_can_get_msg_to_instances(const CAN_HandleTypeDef* const hcan, const uint32_t fifo, \
